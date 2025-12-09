@@ -1,16 +1,22 @@
-import { useCallback, useRef, useEffect } from 'react';
+import { useCallback, useRef, useEffect, useState } from 'react';
 import { useEditor } from '@/contexts/EditorContext';
 import { coordinateSystem } from '@/lib/canvas/coordinateSystem';
 import { compositeLayers } from '@/lib/canvas/compositeLayers';
-import { floodFill, incrementalFloodFill } from '@/lib/canvas/floodFill';
+import { floodFill } from '@/lib/canvas/floodFill';
 import { createLayerFromSelection } from '@/lib/canvas/layerUtils';
+import { PreviewWaveEngine, PreviewResult } from '@/lib/canvas/preview/PreviewWaveEngine';
 import { SelectionMask, Point } from '@/lib/canvas/types';
 import { v4 as uuidv4 } from 'uuid';
-import { CANVAS_WIDTH, CANVAS_HEIGHT } from '@/lib/canvas/constants';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, MIN_TOLERANCE, MAX_TOLERANCE } from '@/lib/canvas/constants';
 
 /**
- * Hook for Magic Wand tool workflow
- * Handles preview expansion, selection creation, and layer extraction
+ * V6 Magic Wand Hook with Organic Preview Flow
+ * 
+ * Features:
+ * - Zero-latency instant seed highlight
+ * - Ring BFS progressive wave expansion
+ * - Breathing tolerance (scroll to expand/contract)
+ * - Request cancellation (no visual glitches)
  */
 export function useMagicWand() {
   const { 
@@ -18,85 +24,78 @@ export function useMagicWand() {
     setPreviewMask, 
     setSelection, 
     setHoverPoint,
+    setTolerance,
     addLayer,
     pushHistory
   } = useEditor();
   
-  const previewGeneratorRef = useRef<Generator | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-  const lastRequestIdRef = useRef<string | null>(null);
+  // V6 Preview Wave Engine
+  const previewEngineRef = useRef<PreviewWaveEngine>(new PreviewWaveEngine());
+  const compositeRef = useRef<ImageData | null>(null);
+  
+  // Preview state
+  const [previewBounds, setPreviewBounds] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [ringNumber, setRingNumber] = useState(0);
+  const [acceptedCount, setAcceptedCount] = useState(0);
   
   // Cancel ongoing preview
   const cancelPreview = useCallback(() => {
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-    previewGeneratorRef.current = null;
-    lastRequestIdRef.current = null;
-  }, []);
+    previewEngineRef.current.cancel();
+    setPreviewMask(null);
+    setPreviewBounds(null);
+    setRingNumber(0);
+    setAcceptedCount(0);
+  }, [setPreviewMask]);
   
-  // Start preview at hover point
+  // Handle preview progress callback
+  const handlePreviewProgress = useCallback((result: PreviewResult) => {
+    setPreviewMask(result.mask);
+    setPreviewBounds(result.bounds);
+    setRingNumber(result.ringNumber);
+    setAcceptedCount(result.acceptedCount);
+  }, [setPreviewMask]);
+  
+  // Handle preview complete callback
+  const handlePreviewComplete = useCallback((result: PreviewResult) => {
+    // Preview is complete, mask is final
+    setPreviewMask(result.mask);
+    setPreviewBounds(result.bounds);
+  }, [setPreviewMask]);
+  
+  // Start V6 preview at hover point
   const startPreview = useCallback((worldX: number, worldY: number) => {
     // Cancel any existing preview
     cancelPreview();
-    
-    const requestId = uuidv4();
-    lastRequestIdRef.current = requestId;
     
     // Get composite of all layers
     const layers = state.project.layers;
     if (layers.length === 0) return;
     
-    const composite = compositeLayers(layers);
+    // Cache composite for performance
+    compositeRef.current = compositeLayers(layers);
     
     // Validate point is in bounds
     if (worldX < 0 || worldX >= CANVAS_WIDTH || worldY < 0 || worldY >= CANVAS_HEIGHT) {
       return;
     }
     
-    // Start incremental flood fill
-    const generator = incrementalFloodFill(
-      composite,
-      Math.floor(worldX),
-      Math.floor(worldY),
-      {
-        tolerance: state.toolState.tolerance,
-        connectivity: 4,
-        timeBudget: 6,
-      }
+    // Start V6 Preview Wave Engine
+    previewEngineRef.current.startWave(
+      compositeRef.current,
+      { x: worldX, y: worldY },
+      state.toolState.tolerance,
+      handlePreviewProgress,
+      handlePreviewComplete
     );
-    
-    previewGeneratorRef.current = generator;
-    
-    // Process frames
-    const processFrame = () => {
-      if (lastRequestIdRef.current !== requestId) return;
-      if (!previewGeneratorRef.current) return;
-      
-      const result = previewGeneratorRef.current.next();
-      
-      if (result.done) {
-        // Final result
-        const finalResult = result.value;
-        setPreviewMask(finalResult.mask);
-        previewGeneratorRef.current = null;
-      } else {
-        // Partial result
-        setPreviewMask(result.value.mask);
-        animationFrameRef.current = requestAnimationFrame(processFrame);
-      }
-    };
-    
-    animationFrameRef.current = requestAnimationFrame(processFrame);
-  }, [state.project.layers, state.toolState.tolerance, cancelPreview, setPreviewMask]);
+  }, [state.project.layers, state.toolState.tolerance, cancelPreview, handlePreviewProgress, handlePreviewComplete]);
   
-  // Create selection from current preview
+  // Create selection from current preview (blocking full flood fill)
   const createSelection = useCallback((worldX: number, worldY: number): SelectionMask | null => {
     const layers = state.project.layers;
     if (layers.length === 0) return null;
     
-    const composite = compositeLayers(layers);
+    // Use cached composite if available
+    const composite = compositeRef.current || compositeLayers(layers);
     
     const result = floodFill(
       composite,
@@ -140,7 +139,7 @@ export function useMagicWand() {
       const layers = state.project.layers;
       if (layers.length === 0) return;
       
-      const composite = compositeLayers(layers);
+      const composite = compositeRef.current || compositeLayers(layers);
       
       try {
         const newLayer = createLayerFromSelection(
@@ -156,10 +155,11 @@ export function useMagicWand() {
     } else {
       // Regular click: Set selection
       setSelection(selection);
+      pushHistory('Create selection');
     }
-  }, [createSelection, cancelPreview, state.project.layers, setSelection, addLayer]);
+  }, [createSelection, cancelPreview, state.project.layers, setSelection, addLayer, pushHistory]);
   
-  // Handle mouse move - update preview
+  // Handle mouse move - update V6 preview
   const handleMouseMove = useCallback((worldX: number, worldY: number) => {
     setHoverPoint({ x: worldX, y: worldY });
     startPreview(worldX, worldY);
@@ -169,23 +169,34 @@ export function useMagicWand() {
   const handleMouseLeave = useCallback(() => {
     cancelPreview();
     setHoverPoint(null);
-    setPreviewMask(null);
-  }, [cancelPreview, setHoverPoint, setPreviewMask]);
+    compositeRef.current = null;
+  }, [cancelPreview, setHoverPoint]);
   
-  // Handle scroll for tolerance adjustment
+  // Handle scroll for breathing tolerance
   const handleWheel = useCallback((deltaY: number) => {
-    const { setTolerance } = useEditor();
     const currentTolerance = state.toolState.tolerance;
-    const newTolerance = Math.max(0, Math.min(255, currentTolerance - deltaY * 0.5));
-    setTolerance(newTolerance);
-  }, [state.toolState.tolerance]);
+    const speed = 0.5; // Pixels per scroll unit
+    const newTolerance = Math.max(
+      MIN_TOLERANCE, 
+      Math.min(MAX_TOLERANCE, currentTolerance - deltaY * speed)
+    );
+    
+    if (newTolerance !== currentTolerance) {
+      setTolerance(newTolerance);
+      
+      // Update breathing tolerance in preview engine
+      if (previewEngineRef.current.isActive()) {
+        previewEngineRef.current.updateTolerance(newTolerance);
+      }
+    }
+  }, [state.toolState.tolerance, setTolerance]);
   
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      cancelPreview();
+      previewEngineRef.current.cancel();
     };
-  }, [cancelPreview]);
+  }, []);
   
   return {
     handleClick,
@@ -194,5 +205,9 @@ export function useMagicWand() {
     handleWheel,
     cancelPreview,
     isActive: state.toolState.activeTool === 'magic-wand',
+    previewBounds,
+    ringNumber,
+    acceptedCount,
+    getZeroLatencyPreview: () => previewEngineRef.current.getZeroLatencyPreview(),
   };
 }
