@@ -48,8 +48,8 @@ export const DEFAULT_SEGMENT_SETTINGS: SegmentSettings = {
   tolerance: 32,
   connectivity: 4,
   colorSpace: 'rgb',
-  waveTimeBudget: 6,
-  waveExpansionRate: 1,
+  waveTimeBudget: 8,
+  waveExpansionRate: 20, // Much faster default
   breathingEnabled: true,
   breathingSmoothness: 0.5,
   instantFillEnabled: false,
