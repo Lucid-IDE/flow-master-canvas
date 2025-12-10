@@ -79,6 +79,8 @@ export interface SelectionMask {
     seedPoint: Point;
     tolerance: number;
     connectivity: 4 | 8;
+    engine?: string;
+    processingTime?: number;
   };
 }
 

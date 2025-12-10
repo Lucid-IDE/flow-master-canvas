@@ -258,8 +258,8 @@ export function SegmentSettingsDrawer() {
                 value={settings.waveExpansionRate}
                 onChange={(v) => updateSetting('waveExpansionRate', v)}
                 min={1}
-                max={10}
-                description="Rings processed per frame cycle"
+                max={50}
+                description="Rings per frame (higher = faster fill)"
               />
               
               <SettingRow label="Breathing Tolerance">
