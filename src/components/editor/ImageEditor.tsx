@@ -1,13 +1,35 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { EditorProvider } from '@/contexts/EditorContext';
 import { EditorCanvas } from './EditorCanvas';
 import { Toolbar } from './Toolbar';
 import { LayerPanel } from './LayerPanel';
 import { TopBar } from './TopBar';
+import { RightDrawerBar, DrawerType } from './RightDrawerBar';
+import { SegmentSettingsDrawer, DebugDrawer, PerformanceDrawer } from './drawers';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+
+function DrawerContent({ drawer }: { drawer: DrawerType | null }) {
+  switch (drawer) {
+    case 'segment-settings':
+      return <SegmentSettingsDrawer />;
+    case 'layers':
+      return <LayerPanel />;
+    case 'debug':
+      return <DebugDrawer />;
+    case 'performance':
+      return <PerformanceDrawer />;
+    default:
+      return null;
+  }
+}
 
 function EditorContent() {
   useKeyboardShortcuts();
+  const [activeDrawer, setActiveDrawer] = useState<DrawerType | null>('segment-settings');
+  
+  const handleDrawerToggle = (drawer: DrawerType) => {
+    setActiveDrawer(prev => prev === drawer ? null : drawer);
+  };
   
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
@@ -15,7 +37,8 @@ function EditorContent() {
       <div className="flex-1 flex overflow-hidden">
         <Toolbar />
         <EditorCanvas />
-        <LayerPanel />
+        {activeDrawer && <DrawerContent drawer={activeDrawer} />}
+        <RightDrawerBar activeDrawer={activeDrawer} onDrawerToggle={handleDrawerToggle} />
       </div>
     </div>
   );
