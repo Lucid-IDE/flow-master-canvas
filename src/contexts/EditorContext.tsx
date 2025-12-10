@@ -3,12 +3,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { Project, Layer, SelectionMask, CanvasState, HistorySnapshot, ToolType, ToolState } from '@/lib/canvas/types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, DEFAULT_TOLERANCE, MAX_HISTORY_SIZE } from '@/lib/canvas/constants';
 import { createLayer, updateLayer, duplicateLayer } from '@/lib/canvas/layerUtils';
+import { SegmentSettings, DEFAULT_SEGMENT_SETTINGS } from '@/lib/canvas/segmentTypes';
 
 // State types
 interface EditorState {
   project: Project;
   canvasState: CanvasState;
   toolState: ToolState;
+  segmentSettings: SegmentSettings;
   history: HistorySnapshot[];
   historyIndex: number;
   isProcessing: boolean;
@@ -27,6 +29,7 @@ type EditorAction =
   | { type: 'SET_CANVAS_STATE'; payload: Partial<CanvasState> }
   | { type: 'SET_TOOL'; payload: ToolType }
   | { type: 'SET_TOLERANCE'; payload: number }
+  | { type: 'SET_SEGMENT_SETTINGS'; payload: SegmentSettings }
   | { type: 'SET_SELECTION'; payload: SelectionMask | null }
   | { type: 'SET_PREVIEW_MASK'; payload: Uint8ClampedArray | null }
   | { type: 'SET_HOVER_POINT'; payload: { x: number; y: number } | null }
@@ -58,6 +61,7 @@ const initialState: EditorState = {
     brushSize: 20,
     brushHardness: 0.8,
   },
+  segmentSettings: DEFAULT_SEGMENT_SETTINGS,
   history: [],
   historyIndex: -1,
   isProcessing: false,
@@ -175,6 +179,14 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       return {
         ...state,
         toolState: { ...state.toolState, tolerance: action.payload },
+        segmentSettings: { ...state.segmentSettings, tolerance: action.payload },
+      };
+    
+    case 'SET_SEGMENT_SETTINGS':
+      return {
+        ...state,
+        segmentSettings: action.payload,
+        toolState: { ...state.toolState, tolerance: action.payload.tolerance },
       };
     
     case 'SET_SELECTION':
@@ -268,6 +280,7 @@ interface EditorContextType {
   selectLayers: (ids: string[]) => void;
   setTool: (tool: ToolType) => void;
   setTolerance: (tolerance: number) => void;
+  setSegmentSettings: (settings: SegmentSettings) => void;
   setCanvasState: (state: Partial<CanvasState>) => void;
   setSelection: (selection: SelectionMask | null) => void;
   setPreviewMask: (mask: Uint8ClampedArray | null) => void;
@@ -314,6 +327,10 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_TOLERANCE', payload: tolerance });
   }, []);
   
+  const setSegmentSettings = useCallback((settings: SegmentSettings) => {
+    dispatch({ type: 'SET_SEGMENT_SETTINGS', payload: settings });
+  }, []);
+  
   const setCanvasState = useCallback((canvasState: Partial<CanvasState>) => {
     dispatch({ type: 'SET_CANVAS_STATE', payload: canvasState });
   }, []);
@@ -358,6 +375,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       selectLayers,
       setTool,
       setTolerance,
+      setSegmentSettings,
       setCanvasState,
       setSelection,
       setPreviewMask,
