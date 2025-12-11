@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { EditorProvider } from '@/contexts/EditorContext';
 import { EditorCanvas } from './EditorCanvas';
 import { Toolbar } from './Toolbar';
@@ -33,12 +33,29 @@ function EditorContent() {
     setActiveDrawer(prev => prev === drawer ? null : drawer);
   };
   
+  // P key to toggle performance overlay
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      
+      if (e.key === 'p' || e.key === 'P') {
+        setShowOverlay(prev => !prev);
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+  
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
       <TopBar />
-      <div className="flex-1 flex overflow-hidden relative">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         <Toolbar />
-        <div className="relative flex-1">
+        <div className="relative flex-1 min-h-0 min-w-0 flex">
           <EditorCanvas />
           {showOverlay && <PerformanceOverlay />}
         </div>

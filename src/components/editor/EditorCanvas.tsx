@@ -286,12 +286,12 @@ export function EditorCanvas() {
   return (
     <div 
       ref={containerRef}
-      className="flex-1 canvas-container cursor-crosshair overflow-hidden"
+      className="flex-1 min-h-0 min-w-0 canvas-container cursor-crosshair overflow-hidden relative"
       onPointerLeave={handleMouseLeave}
     >
       <canvas
         ref={canvasRef}
-        className="block w-full h-full"
+        className="block absolute inset-0 w-full h-full"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -299,13 +299,13 @@ export function EditorCanvas() {
       />
       
       {/* Zoom indicator */}
-      <div className="absolute bottom-4 right-4 editor-panel px-3 py-2 text-xs text-muted-foreground">
+      <div className="absolute bottom-4 right-4 editor-panel px-3 py-2 text-xs text-muted-foreground z-10">
         {Math.round(state.canvasState.zoom * 100)}%
       </div>
       
       {/* Hover info */}
       {state.hoverPoint && (
-        <div className="absolute bottom-4 left-4 editor-panel px-3 py-2 text-xs text-muted-foreground">
+        <div className="absolute bottom-4 left-4 editor-panel px-3 py-2 text-xs text-muted-foreground z-10">
           {Math.floor(state.hoverPoint.x)}, {Math.floor(state.hoverPoint.y)}
         </div>
       )}
