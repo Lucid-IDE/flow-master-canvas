@@ -69,10 +69,10 @@ export function instantFloodFill(
   let minX = startX, maxX = startX;
   let minY = startY, maxY = startY;
   
-  // Precompute neighbor offsets
-  const neighborOffsets = connectivity === 8
-    ? [-width - 1, -width, -width + 1, -1, 1, width - 1, width, width + 1]
-    : [-width, -1, 1, width];
+  // Use coordinate-based neighbors to avoid row wraparound bugs
+  const neighbors4 = [[0, -1], [-1, 0], [1, 0], [0, 1]];
+  const neighbors8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+  const neighborList = connectivity === 8 ? neighbors8 : neighbors4;
   
   while (queueStart < queueEnd) {
     const index = queue[queueStart++];
@@ -90,16 +90,17 @@ export function instantFloodFill(
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
       
-      // Add neighbors
-      for (let i = 0; i < neighborOffsets.length; i++) {
-        const nIndex = index + neighborOffsets[i];
-        const nx = nIndex % width;
-        const ny = (nIndex / width) | 0;
+      // Add neighbors using coordinate offsets (prevents row wraparound)
+      for (const [dx, dy] of neighborList) {
+        const nx = x + dx;
+        const ny = y + dy;
         
-        // Bounds check + not visited
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height && !visited[nIndex]) {
-          visited[nIndex] = 1;
-          queue[queueEnd++] = nIndex;
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+          const nIndex = ny * width + nx;
+          if (!visited[nIndex]) {
+            visited[nIndex] = 1;
+            queue[queueEnd++] = nIndex;
+          }
         }
       }
     }
@@ -407,9 +408,10 @@ export class WaveFloodFill {
     let pixelsProcessed = 0;
     let ringsProcessed = 0;
     
-    const neighborOffsets = this.connectivity === 8
-      ? [-this.width - 1, -this.width, -this.width + 1, -1, 1, this.width - 1, this.width, this.width + 1]
-      : [-this.width, -1, 1, this.width];
+    // Use coordinate-based neighbors to avoid row wraparound bugs
+    const neighbors4: [number, number][] = [[0, -1], [-1, 0], [1, 0], [0, 1]];
+    const neighbors8: [number, number][] = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+    const neighborList = this.connectivity === 8 ? neighbors8 : neighbors4;
     
     // Process until time budget or expansion rate hit
     while (
@@ -436,15 +438,17 @@ export class WaveFloodFill {
           if (y < this.minY) this.minY = y;
           if (y > this.maxY) this.maxY = y;
           
-          // Add neighbors
-          for (let i = 0; i < neighborOffsets.length; i++) {
-            const nIndex = index + neighborOffsets[i];
-            const nx = nIndex % this.width;
-            const ny = (nIndex / this.width) | 0;
+          // Add neighbors using coordinate offsets (prevents row wraparound)
+          for (const [dx, dy] of neighborList) {
+            const nx = x + dx;
+            const ny = y + dy;
             
-            if (nx >= 0 && nx < this.width && ny >= 0 && ny < this.height && !this.visited![nIndex]) {
-              this.visited![nIndex] = 1;
-              this.queue![this.queueEnd++] = nIndex;
+            if (nx >= 0 && nx < this.width && ny >= 0 && ny < this.height) {
+              const nIndex = ny * this.width + nx;
+              if (!this.visited![nIndex]) {
+                this.visited![nIndex] = 1;
+                this.queue![this.queueEnd++] = nIndex;
+              }
             }
           }
         }
