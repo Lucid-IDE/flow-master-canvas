@@ -2,10 +2,11 @@ import { useCallback, useRef, useEffect, useState } from 'react';
 import { useEditor } from '@/contexts/EditorContext';
 import { coordinateSystem } from '@/lib/canvas/coordinateSystem';
 import { compositeLayers } from '@/lib/canvas/compositeLayers';
-import { floodFillWithEngine, WaveFloodFill, instantFloodFill, scanlineFloodFill } from '@/lib/canvas/floodFill';
+import { floodFillWithEngine, WaveFloodFill, instantFloodFill, scanlineFloodFill, hybridFloodFill } from '@/lib/canvas/floodFill';
 import { createLayerFromSelection } from '@/lib/canvas/layerUtils';
 import { SelectionMask, Point, Rectangle } from '@/lib/canvas/types';
 import { SegmentSettings } from '@/lib/canvas/segmentTypes';
+import { performanceTracker } from '@/components/editor/PerformanceOverlay';
 import { v4 as uuidv4 } from 'uuid';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, MIN_TOLERANCE, MAX_TOLERANCE } from '@/lib/canvas/constants';
 
@@ -147,14 +148,33 @@ export function useMagicWand() {
     const engine = segmentSettings.instantFillEnabled ? 'v5-instant' : segmentSettings.engine;
     
     switch (engine) {
+      case 'v7-hybrid': {
+        // Fastest hybrid engine
+        const result = hybridFloodFill(composite, startX, startY, segmentSettings.tolerance, segmentSettings.connectivity);
+        performanceTracker.recordSegment(result.processingTime, result.pixels.length, result.ringCount, 'v7-hybrid');
+        
+        setPreviewMask(result.mask);
+        setPreviewState({
+          mask: result.mask,
+          bounds: result.bounds,
+          ringNumber: result.ringCount,
+          acceptedCount: result.pixels.length,
+          complete: true,
+        });
+        break;
+      }
+      
       case 'v5-instant':
       case 'v4-scanline':
       case 'v3-queue':
-      case 'v2-recursive': {
+      case 'v2-recursive':
+      case 'v1-iterative': {
         // Instant preview - complete fill immediately
         const result = engine === 'v4-scanline'
           ? scanlineFloodFill(composite, startX, startY, segmentSettings.tolerance, segmentSettings.connectivity)
           : instantFloodFill(composite, startX, startY, segmentSettings.tolerance, segmentSettings.connectivity);
+        
+        performanceTracker.recordSegment(result.processingTime, result.pixels.length, result.ringCount, engine);
         
         setPreviewMask(result.mask);
         setPreviewState({
@@ -198,6 +218,14 @@ export function useMagicWand() {
     
     // Use the configured engine for final selection
     const result = floodFillWithEngine(composite, startX, startY, segmentSettings);
+    
+    // Track performance
+    performanceTracker.recordSegment(
+      result.processingTime, 
+      result.pixels.length, 
+      result.ringCount, 
+      segmentSettings.engine
+    );
     
     if (result.pixels.length === 0) return null;
     

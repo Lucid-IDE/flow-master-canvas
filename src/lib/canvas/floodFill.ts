@@ -487,6 +487,270 @@ export class WaveFloodFill {
 }
 
 // ============================================
+// V7 HYBRID - Best of all engines combined
+// Combines: TypedArray queue (V5) + Scanline optimization (V4) + RangeSet spans (fuzzy-select)
+// ============================================
+export function hybridFloodFill(
+  imageData: ImageData,
+  startX: number,
+  startY: number,
+  tolerance: number,
+  connectivity: Connectivity = 4
+): FloodFillResult {
+  const startTime = performance.now();
+  const { width, height, data } = imageData;
+  
+  if (startX < 0 || startX >= width || startY < 0 || startY >= height) {
+    return {
+      mask: new Uint8ClampedArray(width * height),
+      bounds: { x: 0, y: 0, width: 0, height: 0 },
+      pixels: [],
+      ringCount: 0,
+      processingTime: 0,
+    };
+  }
+  
+  const totalPixels = width * height;
+  const mask = new Uint8ClampedArray(totalPixels);
+  
+  // RangeSet-style span tracking: Map<y, Set<rangeKey>>
+  // This tracks horizontal spans per row for fast "already visited" checks
+  const visitedSpans = new Map<number, Array<[number, number]>>();
+  
+  const seedIdx = (startY * width + startX) * 4;
+  const seedR = data[seedIdx];
+  const seedG = data[seedIdx + 1];
+  const seedB = data[seedIdx + 2];
+  const seedA = data[seedIdx + 3];
+  
+  // Inline color matching with alpha-aware comparison (from fuzzy-select)
+  const colorMatches = (x: number, y: number): boolean => {
+    if (x < 0 || x >= width || y < 0 || y >= height) return false;
+    const idx = (y * width + x) * 4;
+    
+    // Alpha-aware color distance (whitening approach from fuzzy-select)
+    const a1 = seedA / 255;
+    const a2 = data[idx + 3] / 255;
+    
+    const dr = a1 * (seedR - 255) - a2 * (data[idx] - 255);
+    const dg = a1 * (seedG - 255) - a2 * (data[idx + 1] - 255);
+    const db = a1 * (seedB - 255) - a2 * (data[idx + 2] - 255);
+    
+    const dist = (Math.abs(dr) + Math.abs(dg) + Math.abs(db)) / 255 / 3 * 100;
+    return dist <= tolerance;
+  };
+  
+  // Check if point in any visited span
+  const isVisited = (x: number, y: number): boolean => {
+    const spans = visitedSpans.get(y);
+    if (!spans) return false;
+    for (const [start, end] of spans) {
+      if (x >= start && x <= end) return true;
+    }
+    return false;
+  };
+  
+  // Add span to visited
+  const addSpan = (y: number, x1: number, x2: number) => {
+    if (!visitedSpans.has(y)) {
+      visitedSpans.set(y, []);
+    }
+    visitedSpans.get(y)!.push([x1, x2]);
+  };
+  
+  const pixels: number[] = [];
+  let minX = startX, maxX = startX;
+  let minY = startY, maxY = startY;
+  
+  // Use TypedArray stack for scanline seeds [x, y, direction]
+  // direction: 1 = down, -1 = up, 0 = initial
+  const stack = new Int32Array(totalPixels * 3);
+  let stackPtr = 0;
+  
+  // Push initial scanline (both directions)
+  stack[stackPtr++] = startX;
+  stack[stackPtr++] = startY;
+  stack[stackPtr++] = 0; // initial - check both
+  
+  while (stackPtr > 0) {
+    const direction = stack[--stackPtr];
+    const y = stack[--stackPtr];
+    const seedX = stack[--stackPtr];
+    
+    if (y < 0 || y >= height) continue;
+    if (isVisited(seedX, y)) continue;
+    
+    // March left to find span start
+    let x = seedX;
+    while (x >= 0 && colorMatches(x, y) && !isVisited(x, y)) {
+      x--;
+    }
+    const spanStart = x + 1;
+    
+    // March right to find span end
+    x = seedX;
+    while (x < width && colorMatches(x, y) && !isVisited(x, y)) {
+      x++;
+    }
+    const spanEnd = x - 1;
+    
+    if (spanEnd < spanStart) continue;
+    
+    // Mark span as visited and add to mask
+    addSpan(y, spanStart, spanEnd);
+    for (let px = spanStart; px <= spanEnd; px++) {
+      const idx = y * width + px;
+      mask[idx] = 255;
+      pixels.push(idx);
+      
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+    }
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    
+    // Scan for new spans in adjacent rows
+    const checkRow = (checkY: number, dy: number) => {
+      if (checkY < 0 || checkY >= height) return;
+      
+      let inSpan = false;
+      for (let px = spanStart; px <= spanEnd; px++) {
+        const matches = colorMatches(px, checkY) && !isVisited(px, checkY);
+        
+        if (matches && !inSpan) {
+          // Start of new span seed
+          stack[stackPtr++] = px;
+          stack[stackPtr++] = checkY;
+          stack[stackPtr++] = dy;
+          inSpan = true;
+        } else if (!matches && inSpan) {
+          inSpan = false;
+        }
+      }
+      
+      // 8-connectivity: check diagonals at span edges
+      if (connectivity === 8) {
+        if (spanStart > 0 && colorMatches(spanStart - 1, checkY) && !isVisited(spanStart - 1, checkY)) {
+          stack[stackPtr++] = spanStart - 1;
+          stack[stackPtr++] = checkY;
+          stack[stackPtr++] = dy;
+        }
+        if (spanEnd < width - 1 && colorMatches(spanEnd + 1, checkY) && !isVisited(spanEnd + 1, checkY)) {
+          stack[stackPtr++] = spanEnd + 1;
+          stack[stackPtr++] = checkY;
+          stack[stackPtr++] = dy;
+        }
+      }
+    };
+    
+    // Check above and below based on direction
+    if (direction >= 0) checkRow(y + 1, 1);  // down
+    if (direction <= 0) checkRow(y - 1, -1); // up
+  }
+  
+  return {
+    mask,
+    bounds: { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 },
+    pixels,
+    ringCount: 1,
+    processingTime: performance.now() - startTime,
+  };
+}
+
+// ============================================
+// V1 ITERATIVE GENERATOR - From fuzzy-select pattern
+// Processes N steps per frame, non-blocking
+// ============================================
+export interface IterativeFloodFillState {
+  generator: Generator<{ pixelsThisStep: number; totalPixels: number; complete: boolean }>;
+  mask: Uint8ClampedArray;
+  bounds: { minX: number; maxX: number; minY: number; maxY: number };
+  pixels: number[];
+  complete: boolean;
+}
+
+export function* createIterativeFloodFill(
+  imageData: ImageData,
+  startX: number,
+  startY: number,
+  tolerance: number,
+  connectivity: Connectivity = 4
+): Generator<{ pixelsThisStep: number; totalPixels: number; complete: boolean }> {
+  const { width, height, data } = imageData;
+  
+  if (startX < 0 || startX >= width || startY < 0 || startY >= height) {
+    return { pixelsThisStep: 0, totalPixels: 0, complete: true };
+  }
+  
+  const totalPixels = width * height;
+  const mask = new Uint8ClampedArray(totalPixels);
+  const visited = new Uint8Array(totalPixels);
+  const pixels: number[] = [];
+  
+  const seedIdx = (startY * width + startX) * 4;
+  const seedR = data[seedIdx];
+  const seedG = data[seedIdx + 1];
+  const seedB = data[seedIdx + 2];
+  const seedA = data[seedIdx + 3];
+  
+  const colorMatches = (idx: number): boolean => {
+    const pIdx = idx * 4;
+    const a1 = seedA / 255;
+    const a2 = data[pIdx + 3] / 255;
+    const dr = a1 * (seedR - 255) - a2 * (data[pIdx] - 255);
+    const dg = a1 * (seedG - 255) - a2 * (data[pIdx + 1] - 255);
+    const db = a1 * (seedB - 255) - a2 * (data[pIdx + 2] - 255);
+    const dist = (Math.abs(dr) + Math.abs(dg) + Math.abs(db)) / 255 / 3 * 100;
+    return dist <= tolerance;
+  };
+  
+  const queue: number[] = [startY * width + startX];
+  visited[queue[0]] = 1;
+  
+  const neighbors = connectivity === 8
+    ? [-width - 1, -width, -width + 1, -1, 1, width - 1, width, width + 1]
+    : [-width, -1, 1, width];
+  
+  let idx = 0;
+  
+  while (idx < queue.length) {
+    let pixelsThisStep = 0;
+    const stepEnd = Math.min(idx + 100, queue.length); // Process 100 pixels per yield
+    
+    while (idx < stepEnd && idx < queue.length) {
+      const index = queue[idx++];
+      const x = index % width;
+      const y = (index / width) | 0;
+      
+      if (colorMatches(index)) {
+        mask[index] = 255;
+        pixels.push(index);
+        pixelsThisStep++;
+        
+        for (const offset of neighbors) {
+          const nIndex = index + offset;
+          const nx = nIndex % width;
+          const ny = (nIndex / width) | 0;
+          
+          if (nx >= 0 && nx < width && ny >= 0 && ny < height && !visited[nIndex]) {
+            visited[nIndex] = 1;
+            queue.push(nIndex);
+          }
+        }
+      }
+    }
+    
+    yield { 
+      pixelsThisStep, 
+      totalPixels: pixels.length, 
+      complete: idx >= queue.length 
+    };
+  }
+  
+  return { pixelsThisStep: 0, totalPixels: pixels.length, complete: true };
+}
+
+// ============================================
 // UNIFIED API - Select engine and execute
 // ============================================
 export function floodFillWithEngine(
@@ -498,6 +762,9 @@ export function floodFillWithEngine(
   const { engine, tolerance, connectivity } = settings;
   
   switch (engine) {
+    case 'v7-hybrid':
+      return hybridFloodFill(imageData, startX, startY, tolerance, connectivity);
+    
     case 'v5-instant':
       return instantFloodFill(imageData, startX, startY, tolerance, connectivity);
     
@@ -509,8 +776,8 @@ export function floodFillWithEngine(
     
     case 'v6-wave':
     default:
-      // For blocking call, use instant
-      return instantFloodFill(imageData, startX, startY, tolerance, connectivity);
+      // For blocking call, use hybrid as it's fastest
+      return hybridFloodFill(imageData, startX, startY, tolerance, connectivity);
   }
 }
 
