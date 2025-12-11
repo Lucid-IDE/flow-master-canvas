@@ -145,9 +145,12 @@ export function SegmentSettingsDrawer() {
                     <SelectItem key={key} value={key}>
                       <div className="flex items-center gap-2">
                         <span>{info.name}</span>
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                        <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${info.recommended ? 'border-green-500 text-green-500' : ''}`}>
                           {info.speed}
                         </Badge>
+                        {info.recommended && (
+                          <Badge className="text-[9px] px-1 py-0 bg-green-500">★</Badge>
+                        )}
                       </div>
                     </SelectItem>
                   ))}
@@ -156,6 +159,11 @@ export function SegmentSettingsDrawer() {
               <p className="text-xs text-muted-foreground">
                 {SEGMENT_ENGINE_INFO[settings.engine].description}
               </p>
+              {SEGMENT_ENGINE_INFO[settings.engine].recommended && (
+                <Badge variant="outline" className="text-green-500 border-green-500 text-[10px]">
+                  Recommended - Best Performance
+                </Badge>
+              )}
             </div>
           </SettingsSection>
           

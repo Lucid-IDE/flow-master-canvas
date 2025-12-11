@@ -1,6 +1,14 @@
 // Segment/Magic Wand Engine Types
 
-export type SegmentEngine = 'v6-wave' | 'v5-instant' | 'v4-scanline' | 'v3-queue' | 'v2-recursive';
+export type SegmentEngine = 
+  | 'v7-hybrid'      // NEW: Best of all approaches combined
+  | 'v6-wave' 
+  | 'v5-instant' 
+  | 'v4-scanline' 
+  | 'v3-queue' 
+  | 'v2-recursive'
+  | 'v1-iterative';  // NEW: Generator-based iterative (from fuzzy-select)
+
 export type SegmentMethod = 'flood-fill' | 'color-range' | 'edge-detect' | 'contiguous' | 'similar';
 export type Connectivity = 4 | 8;
 export type ColorSpace = 'rgb' | 'hsl' | 'lab';
@@ -70,7 +78,14 @@ export const SEGMENT_ENGINE_INFO: Record<SegmentEngine, {
   name: string; 
   description: string; 
   speed: 'slow' | 'medium' | 'fast' | 'instant';
+  recommended?: boolean;
 }> = {
+  'v7-hybrid': {
+    name: 'V7 Hybrid',
+    description: 'Best of all engines: TypedArray queue + RangeSet spans + scanline optimization + progressive mode',
+    speed: 'instant',
+    recommended: true,
+  },
   'v6-wave': {
     name: 'V6 Organic Wave',
     description: 'Ring BFS with progressive expansion, breathing tolerance, zero-latency preview',
@@ -78,12 +93,12 @@ export const SEGMENT_ENGINE_INFO: Record<SegmentEngine, {
   },
   'v5-instant': {
     name: 'V5 Instant Fill',
-    description: 'Complete flood fill in single frame, blocking but immediate results',
+    description: 'Complete flood fill in single frame using TypedArray queue for O(1) operations',
     speed: 'instant',
   },
   'v4-scanline': {
     name: 'V4 Scanline',
-    description: 'Optimized scanline flood fill, faster for large areas',
+    description: 'Optimized scanline flood fill with horizontal run detection, faster for large areas',
     speed: 'fast',
   },
   'v3-queue': {
@@ -95,6 +110,11 @@ export const SEGMENT_ENGINE_INFO: Record<SegmentEngine, {
     name: 'V2 Recursive',
     description: 'Simple recursive flood fill, may stack overflow on large areas',
     speed: 'slow',
+  },
+  'v1-iterative': {
+    name: 'V1 Iterative Generator',
+    description: 'Generator-based iterative processing, processes N steps per frame without blocking',
+    speed: 'medium',
   },
 };
 
