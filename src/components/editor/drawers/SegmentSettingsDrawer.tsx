@@ -248,6 +248,36 @@ export function SegmentSettingsDrawer() {
           
           <Separator />
           
+          {/* V8 Boundary Re-Scan Settings */}
+          {settings.engine === 'v8-boundary-rescan' && (
+            <SettingsSection title="V8 Boundary Re-Scan">
+              <p className="text-xs text-muted-foreground mb-3">
+                Low-res pass for body + pixel-perfect re-scan at edges
+              </p>
+              
+              <SliderRow
+                label="Proxy Size"
+                value={settings.boundaryProxySize}
+                onChange={(v) => updateSetting('boundaryProxySize', v)}
+                min={256}
+                max={1024}
+                step={128}
+                unit="px"
+                description="Low-res proxy resolution (lower = faster)"
+              />
+              
+              <SliderRow
+                label="Buffer Range"
+                value={settings.boundaryBufferRange}
+                onChange={(v) => updateSetting('boundaryBufferRange', v)}
+                min={2}
+                max={15}
+                unit="px"
+                description="Edge re-scan zone width (higher = more precision)"
+              />
+            </SettingsSection>
+          )}
+          
           {/* V6 Wave Settings */}
           {settings.engine === 'v6-wave' && (
             <SettingsSection title="V6 Wave Options">
