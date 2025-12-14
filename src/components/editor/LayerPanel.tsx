@@ -1,6 +1,6 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { useEditor } from '@/contexts/EditorContext';
-import { Layer } from '@/lib/canvas/types';
+import { Layer, Modifier } from '@/lib/canvas/types';
 import { 
   Eye, 
   EyeOff, 
@@ -11,11 +11,70 @@ import {
   ChevronUp,
   ChevronDown,
   Image,
+  Layers,
+  ChevronRight,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Slider } from '@/components/ui/slider';
-import { Separator } from '@/components/ui/separator';
 import { duplicateLayer } from '@/lib/canvas/layerUtils';
+
+interface ModifierItemProps {
+  modifier: Modifier;
+  layerId: string;
+  onRemove: () => void;
+  onToggle: () => void;
+  onOpacityChange: (opacity: number) => void;
+}
+
+function ModifierItem({ modifier, layerId, onRemove, onToggle, onOpacityChange }: ModifierItemProps) {
+  const getModifierLabel = (type: string) => {
+    switch (type) {
+      case 'transparency-mask': return 'Transparency Mask';
+      case 'brightness': return 'Brightness';
+      case 'contrast': return 'Contrast';
+      case 'saturation': return 'Saturation';
+      default: return type;
+    }
+  };
+  
+  return (
+    <div className={cn(
+      'flex items-center gap-2 px-2 py-1.5 bg-secondary/50 rounded text-xs',
+      !modifier.enabled && 'opacity-50'
+    )}>
+      <button
+        onClick={onToggle}
+        className="p-0.5 hover:bg-secondary rounded"
+        title={modifier.enabled ? 'Disable modifier' : 'Enable modifier'}
+      >
+        {modifier.enabled ? <Eye size={12} /> : <EyeOff size={12} />}
+      </button>
+      
+      <span className="flex-1 truncate">{getModifierLabel(modifier.type)}</span>
+      
+      <div className="flex items-center gap-1 w-20">
+        <Slider
+          value={[modifier.opacity * 100]}
+          onValueChange={([value]) => onOpacityChange(value / 100)}
+          min={0}
+          max={100}
+          step={1}
+          className="flex-1"
+        />
+        <span className="w-6 text-right text-muted-foreground">{Math.round(modifier.opacity * 100)}%</span>
+      </div>
+      
+      <button
+        onClick={onRemove}
+        className="p-0.5 hover:bg-destructive/20 hover:text-destructive rounded"
+        title="Remove modifier"
+      >
+        <X size={12} />
+      </button>
+    </div>
+  );
+}
 
 interface LayerItemProps {
   layer: Layer;
@@ -26,6 +85,9 @@ interface LayerItemProps {
   onDelete: () => void;
   onDuplicate: () => void;
   onOpacityChange: (opacity: number) => void;
+  onRemoveModifier: (modifierId: string) => void;
+  onToggleModifier: (modifierId: string) => void;
+  onModifierOpacityChange: (modifierId: string, opacity: number) => void;
 }
 
 function LayerItem({
@@ -37,7 +99,13 @@ function LayerItem({
   onDelete,
   onDuplicate,
   onOpacityChange,
+  onRemoveModifier,
+  onToggleModifier,
+  onModifierOpacityChange,
 }: LayerItemProps) {
+  const [showModifiers, setShowModifiers] = useState(false);
+  const hasModifiers = layer.modifiers.length > 0;
+  
   // Create thumbnail
   const thumbnailUrl = React.useMemo(() => {
     const canvas = document.createElement('canvas');
@@ -80,57 +148,95 @@ function LayerItem({
   }, [layer.imageData]);
   
   return (
-    <div
-      className={cn(
-        'layer-item group',
-        isSelected && 'selected'
-      )}
-      onClick={onSelect}
-    >
-      {/* Thumbnail */}
-      <div className="w-10 h-10 rounded border border-border overflow-hidden flex-shrink-0">
-        <img src={thumbnailUrl} alt={layer.name} className="w-full h-full object-cover" />
-      </div>
-      
-      {/* Info */}
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{layer.name}</p>
-        <p className="text-xs text-muted-foreground">
-          {layer.imageData.width} × {layer.imageData.height}
-        </p>
-      </div>
-      
-      {/* Actions */}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button
-          className="p-1 hover:bg-secondary rounded"
-          onClick={(e) => { e.stopPropagation(); onToggleVisibility(); }}
-        >
-          {layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}
-        </button>
-        <button
-          className="p-1 hover:bg-secondary rounded"
-          onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
-        >
-          {layer.locked ? <Lock size={14} /> : <Unlock size={14} />}
-        </button>
-      </div>
-      
-      {/* Opacity slider on selection */}
-      {isSelected && (
-        <div className="absolute bottom-0 left-0 right-0 p-2 bg-card/90 border-t border-border">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Opacity</span>
-            <Slider
-              value={[layer.opacity * 100]}
-              onValueChange={([value]) => onOpacityChange(value / 100)}
-              min={0}
-              max={100}
-              step={1}
-              className="flex-1"
-            />
-            <span className="text-xs w-8 text-right">{Math.round(layer.opacity * 100)}%</span>
+    <div className="space-y-1">
+      <div
+        className={cn(
+          'layer-item group',
+          isSelected && 'selected'
+        )}
+        onClick={onSelect}
+      >
+        {/* Modifier toggle */}
+        {hasModifiers && (
+          <button
+            className={cn(
+              'p-1 hover:bg-secondary rounded transition-transform',
+              showModifiers && 'rotate-90'
+            )}
+            onClick={(e) => { e.stopPropagation(); setShowModifiers(!showModifiers); }}
+          >
+            <ChevronRight size={14} />
+          </button>
+        )}
+        
+        {/* Thumbnail */}
+        <div className="w-10 h-10 rounded border border-border overflow-hidden flex-shrink-0">
+          <img src={thumbnailUrl} alt={layer.name} className="w-full h-full object-cover" />
+        </div>
+        
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1">
+            <p className="text-sm font-medium truncate">{layer.name}</p>
+            {hasModifiers && (
+              <span className="text-xs text-primary bg-primary/20 px-1 rounded">
+                {layer.modifiers.length}
+              </span>
+            )}
           </div>
+          <p className="text-xs text-muted-foreground">
+            {layer.imageData.width} × {layer.imageData.height}
+          </p>
+        </div>
+        
+        {/* Actions */}
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            className="p-1 hover:bg-secondary rounded"
+            onClick={(e) => { e.stopPropagation(); onToggleVisibility(); }}
+          >
+            {layer.visible ? <Eye size={14} /> : <EyeOff size={14} />}
+          </button>
+          <button
+            className="p-1 hover:bg-secondary rounded"
+            onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
+          >
+            {layer.locked ? <Lock size={14} /> : <Unlock size={14} />}
+          </button>
+        </div>
+        
+        {/* Opacity slider on selection */}
+        {isSelected && (
+          <div className="absolute bottom-0 left-0 right-0 p-2 bg-card/90 border-t border-border">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Opacity</span>
+              <Slider
+                value={[layer.opacity * 100]}
+                onValueChange={([value]) => onOpacityChange(value / 100)}
+                min={0}
+                max={100}
+                step={1}
+                className="flex-1"
+              />
+              <span className="text-xs w-8 text-right">{Math.round(layer.opacity * 100)}%</span>
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {/* Modifiers list */}
+      {showModifiers && hasModifiers && (
+        <div className="ml-6 space-y-1 pl-2 border-l-2 border-primary/30">
+          {layer.modifiers.map((modifier) => (
+            <ModifierItem
+              key={modifier.id}
+              modifier={modifier}
+              layerId={layer.id}
+              onRemove={() => onRemoveModifier(modifier.id)}
+              onToggle={() => onToggleModifier(modifier.id)}
+              onOpacityChange={(opacity) => onModifierOpacityChange(modifier.id, opacity)}
+            />
+          ))}
         </div>
       )}
     </div>
@@ -138,7 +244,7 @@ function LayerItem({
 }
 
 export function LayerPanel() {
-  const { state, selectLayers, updateLayer, deleteLayer, dispatch, pushHistory } = useEditor();
+  const { state, selectLayers, updateLayer, deleteLayer, dispatch, pushHistory, removeModifier, updateModifier } = useEditor();
   const layers = [...state.project.layers].reverse(); // Display top to bottom
   
   const handleToggleVisibility = useCallback((layer: Layer) => {
@@ -177,10 +283,28 @@ export function LayerPanel() {
     }
   }, [state.project.layers, dispatch]);
   
+  const handleRemoveModifier = useCallback((layerId: string, modifierId: string) => {
+    removeModifier(layerId, modifierId);
+    pushHistory('Remove modifier');
+  }, [removeModifier, pushHistory]);
+  
+  const handleToggleModifier = useCallback((layerId: string, modifierId: string) => {
+    const layer = state.project.layers.find(l => l.id === layerId);
+    const modifier = layer?.modifiers.find(m => m.id === modifierId);
+    if (modifier) {
+      updateModifier(layerId, modifierId, { enabled: !modifier.enabled });
+    }
+  }, [state.project.layers, updateModifier]);
+  
+  const handleModifierOpacityChange = useCallback((layerId: string, modifierId: string, opacity: number) => {
+    updateModifier(layerId, modifierId, { opacity });
+  }, [updateModifier]);
+  
   return (
     <div className="w-64 bg-card border-l border-border flex flex-col">
       {/* Header */}
-      <div className="p-3 border-b border-border">
+      <div className="p-3 border-b border-border flex items-center gap-2">
+        <Layers size={16} className="text-primary" />
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
           Layers
         </h2>
@@ -206,9 +330,19 @@ export function LayerPanel() {
               onDelete={() => deleteLayer(layer.id)}
               onDuplicate={() => handleDuplicate(layer)}
               onOpacityChange={(opacity) => handleOpacityChange(layer, opacity)}
+              onRemoveModifier={(modifierId) => handleRemoveModifier(layer.id, modifierId)}
+              onToggleModifier={(modifierId) => handleToggleModifier(layer.id, modifierId)}
+              onModifierOpacityChange={(modifierId, opacity) => handleModifierOpacityChange(layer.id, modifierId, opacity)}
             />
           ))
         )}
+      </div>
+      
+      {/* Help text */}
+      <div className="p-2 border-t border-border text-xs text-muted-foreground">
+        <p>Click: New layer from segment</p>
+        <p>Shift+Click: Merge into layer</p>
+        <p>Alt+Click: Add mask modifier</p>
       </div>
       
       {/* Actions */}
