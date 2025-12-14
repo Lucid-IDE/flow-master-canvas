@@ -106,6 +106,64 @@ export function EditorCanvas() {
         }
         
         ctx.restore();
+        
+        // Draw segment highlight for segment layers
+        const isSelected = state.project.selectedLayerIds.includes(layer.id);
+        if (layer.name.startsWith('Segment') && layer.segmentColor) {
+          ctx.save();
+          
+          // Draw filled highlight with low opacity
+          ctx.globalAlpha = isSelected ? 0.35 : 0.2;
+          ctx.fillStyle = layer.segmentColor;
+          
+          // Iterate over layer pixels and fill non-transparent ones
+          const data = layer.imageData.data;
+          for (let py = 0; py < layer.imageData.height; py++) {
+            for (let px = 0; px < layer.imageData.width; px++) {
+              const idx = (py * layer.imageData.width + px) * 4;
+              if (data[idx + 3] > 0) {
+                ctx.fillRect(layer.bounds.x + px, layer.bounds.y + py, 1, 1);
+              }
+            }
+          }
+          
+          // Draw border/glow outline for selected segments
+          if (isSelected) {
+            ctx.globalAlpha = 0.8;
+            ctx.strokeStyle = layer.segmentColor;
+            ctx.lineWidth = 2 / state.canvasState.zoom;
+            ctx.shadowColor = layer.segmentColor;
+            ctx.shadowBlur = 8 / state.canvasState.zoom;
+            
+            // Draw outline around non-transparent edge pixels
+            ctx.beginPath();
+            for (let py = 0; py < layer.imageData.height; py++) {
+              for (let px = 0; px < layer.imageData.width; px++) {
+                const idx = (py * layer.imageData.width + px) * 4;
+                if (data[idx + 3] > 0) {
+                  // Check if edge pixel
+                  const leftIdx = px > 0 ? (py * layer.imageData.width + px - 1) * 4 : -1;
+                  const rightIdx = px < layer.imageData.width - 1 ? (py * layer.imageData.width + px + 1) * 4 : -1;
+                  const topIdx = py > 0 ? ((py - 1) * layer.imageData.width + px) * 4 : -1;
+                  const bottomIdx = py < layer.imageData.height - 1 ? ((py + 1) * layer.imageData.width + px) * 4 : -1;
+                  
+                  const isEdge = 
+                    (leftIdx < 0 || data[leftIdx + 3] === 0) ||
+                    (rightIdx < 0 || data[rightIdx + 3] === 0) ||
+                    (topIdx < 0 || data[topIdx + 3] === 0) ||
+                    (bottomIdx < 0 || data[bottomIdx + 3] === 0);
+                  
+                  if (isEdge) {
+                    ctx.rect(layer.bounds.x + px, layer.bounds.y + py, 1, 1);
+                  }
+                }
+              }
+            }
+            ctx.stroke();
+          }
+          
+          ctx.restore();
+        }
       }
       
       // Draw preview mask
