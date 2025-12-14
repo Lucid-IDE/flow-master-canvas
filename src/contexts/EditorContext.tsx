@@ -26,6 +26,9 @@ type EditorAction =
   | { type: 'DELETE_LAYER'; payload: string }
   | { type: 'SELECT_LAYERS'; payload: string[] }
   | { type: 'REORDER_LAYERS'; payload: Layer[] }
+  | { type: 'ADD_MODIFIER'; payload: { layerId: string; modifier: import('@/lib/canvas/types').Modifier } }
+  | { type: 'REMOVE_MODIFIER'; payload: { layerId: string; modifierId: string } }
+  | { type: 'UPDATE_MODIFIER'; payload: { layerId: string; modifierId: string; updates: Partial<import('@/lib/canvas/types').Modifier> } }
   | { type: 'SET_CANVAS_STATE'; payload: Partial<CanvasState> }
   | { type: 'SET_TOOL'; payload: ToolType }
   | { type: 'SET_TOLERANCE'; payload: number }
@@ -163,6 +166,56 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         },
       };
     
+    case 'ADD_MODIFIER':
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          layers: state.project.layers.map(layer =>
+            layer.id === action.payload.layerId
+              ? { ...layer, modifiers: [...layer.modifiers, action.payload.modifier], modifiedAt: Date.now() }
+              : layer
+          ),
+          modifiedAt: Date.now(),
+        },
+      };
+    
+    case 'REMOVE_MODIFIER':
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          layers: state.project.layers.map(layer =>
+            layer.id === action.payload.layerId
+              ? { ...layer, modifiers: layer.modifiers.filter(m => m.id !== action.payload.modifierId), modifiedAt: Date.now() }
+              : layer
+          ),
+          modifiedAt: Date.now(),
+        },
+      };
+    
+    case 'UPDATE_MODIFIER':
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          layers: state.project.layers.map(layer =>
+            layer.id === action.payload.layerId
+              ? {
+                  ...layer,
+                  modifiers: layer.modifiers.map(m =>
+                    m.id === action.payload.modifierId
+                      ? { ...m, ...action.payload.updates }
+                      : m
+                  ),
+                  modifiedAt: Date.now(),
+                }
+              : layer
+          ),
+          modifiedAt: Date.now(),
+        },
+      };
+    
     case 'SET_CANVAS_STATE':
       return {
         ...state,
@@ -288,6 +341,9 @@ interface EditorContextType {
   pushHistory: (description: string) => void;
   undo: () => void;
   redo: () => void;
+  addModifier: (layerId: string, modifier: import('@/lib/canvas/types').Modifier) => void;
+  removeModifier: (layerId: string, modifierId: string) => void;
+  updateModifier: (layerId: string, modifierId: string, updates: Partial<import('@/lib/canvas/types').Modifier>) => void;
   
   // Computed values
   canUndo: boolean;
@@ -359,6 +415,18 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'REDO' });
   }, []);
   
+  const addModifier = useCallback((layerId: string, modifier: import('@/lib/canvas/types').Modifier) => {
+    dispatch({ type: 'ADD_MODIFIER', payload: { layerId, modifier } });
+  }, []);
+  
+  const removeModifier = useCallback((layerId: string, modifierId: string) => {
+    dispatch({ type: 'REMOVE_MODIFIER', payload: { layerId, modifierId } });
+  }, []);
+  
+  const updateModifier = useCallback((layerId: string, modifierId: string, updates: Partial<import('@/lib/canvas/types').Modifier>) => {
+    dispatch({ type: 'UPDATE_MODIFIER', payload: { layerId, modifierId, updates } });
+  }, []);
+  
   const canUndo = state.historyIndex > 0;
   const canRedo = state.historyIndex < state.history.length - 1;
   const selectedLayers = state.project.layers.filter(
@@ -383,6 +451,9 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       pushHistory,
       undo,
       redo,
+      addModifier,
+      removeModifier,
+      updateModifier,
       canUndo,
       canRedo,
       selectedLayers,

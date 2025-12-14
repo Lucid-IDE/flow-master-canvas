@@ -3,17 +3,20 @@ import { useEditor } from '@/contexts/EditorContext';
 import { useCanvasNavigation } from '@/hooks/useCanvasNavigation';
 import { useMagicWand } from '@/hooks/useMagicWand';
 import { coordinateSystem } from '@/lib/canvas/coordinateSystem';
+import { ModifierStack } from '@/lib/canvas/modifierStack';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, GRID_SIZE } from '@/lib/canvas/constants';
 
 export function EditorCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { state } = useEditor();
+  const { state, setCanvasState } = useEditor();
   const { handleZoom, startPan, updatePan, endPan } = useCanvasNavigation(canvasRef);
-  const { handleClick, handleMouseMove, handleMouseLeave, isActive: isMagicWandActive } = useMagicWand();
+  const { handleClick, handleMouseMove, handleMouseLeave, handleWheel: handleWandWheel, isActive: isMagicWandActive } = useMagicWand();
   
   const isSpaceHeldRef = useRef(false);
   const isDraggingRef = useRef(false);
+  const isRightClickRef = useRef(false);
+  const rightClickStartRef = useRef<{ x: number; y: number } | null>(null);
   
   // Initialize canvas
   useEffect(() => {
@@ -81,21 +84,24 @@ export function EditorCanvas() {
       ctx.lineWidth = 2 / state.canvasState.zoom;
       ctx.strokeRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
       
-      // Draw layers
+      // Draw layers with modifiers applied
       for (const layer of state.project.layers) {
         if (!layer.visible) continue;
         
         ctx.save();
         ctx.globalAlpha = layer.opacity;
         
+        // Apply modifier stack to get final imageData
+        const finalImageData = ModifierStack.applyStack(layer);
+        
         // Create temp canvas for layer
         const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = layer.imageData.width;
-        tempCanvas.height = layer.imageData.height;
+        tempCanvas.width = finalImageData.width;
+        tempCanvas.height = finalImageData.height;
         const tempCtx = tempCanvas.getContext('2d');
         
         if (tempCtx) {
-          tempCtx.putImageData(layer.imageData, 0, 0);
+          tempCtx.putImageData(finalImageData, 0, 0);
           ctx.drawImage(tempCanvas, layer.bounds.x, layer.bounds.y);
         }
         
@@ -197,12 +203,30 @@ export function EditorCanvas() {
     ctx.restore();
   };
   
+  // Prevent context menu on right click
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+  }, []);
+  
   // Event handlers
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     
     const worldPoint = coordinateSystem.screenToWorld(e.clientX, e.clientY);
+    
+    // Right click for pan
+    if (e.button === 2) {
+      isRightClickRef.current = true;
+      rightClickStartRef.current = { x: e.clientX, y: e.clientY };
+      isDraggingRef.current = true;
+      startPan(e.clientX, e.clientY);
+      canvas.setPointerCapture(e.pointerId);
+      if (containerRef.current) {
+        containerRef.current.style.cursor = 'grab';
+      }
+      return;
+    }
     
     // Middle mouse or space+click for pan
     if (e.button === 1 || isSpaceHeldRef.current) {
@@ -214,7 +238,7 @@ export function EditorCanvas() {
     
     // Left click with magic wand
     if (e.button === 0 && isMagicWandActive) {
-      handleClick(worldPoint.x, worldPoint.y, e.altKey);
+      handleClick(worldPoint.x, worldPoint.y, e.shiftKey, e.altKey);
     }
   }, [startPan, handleClick, isMagicWandActive]);
   
@@ -237,22 +261,43 @@ export function EditorCanvas() {
   
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     isDraggingRef.current = false;
+    isRightClickRef.current = false;
+    rightClickStartRef.current = null;
     endPan();
     canvasRef.current?.releasePointerCapture(e.pointerId);
+    if (containerRef.current) {
+      containerRef.current.style.cursor = 'crosshair';
+    }
   }, [endPan]);
   
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
     
-    if (e.ctrlKey || e.metaKey) {
-      // Zoom
+    // Right click held + scroll = zoom
+    if (isRightClickRef.current) {
       handleZoom(e.deltaY, e.clientX, e.clientY);
-    } else {
-      // Pan
-      const { panX, panY } = state.canvasState;
-      const { setCanvasState } = useEditor();
+      return;
     }
-  }, [handleZoom, state.canvasState]);
+    
+    // Ctrl/Cmd + scroll = zoom
+    if (e.ctrlKey || e.metaKey) {
+      handleZoom(e.deltaY, e.clientX, e.clientY);
+      return;
+    }
+    
+    // Magic wand active: scroll adjusts tolerance
+    if (isMagicWandActive) {
+      handleWandWheel(e.deltaY);
+      return;
+    }
+    
+    // Default: pan
+    const panSpeed = 1;
+    setCanvasState({
+      panX: state.canvasState.panX - e.deltaX * panSpeed,
+      panY: state.canvasState.panY - e.deltaY * panSpeed,
+    });
+  }, [handleZoom, isMagicWandActive, handleWandWheel, setCanvasState, state.canvasState]);
   
   // Space key for pan mode
   useEffect(() => {
@@ -269,7 +314,7 @@ export function EditorCanvas() {
       if (e.code === 'Space') {
         isSpaceHeldRef.current = false;
         if (containerRef.current) {
-          containerRef.current.style.cursor = 'default';
+          containerRef.current.style.cursor = 'crosshair';
         }
       }
     };
@@ -288,6 +333,7 @@ export function EditorCanvas() {
       ref={containerRef}
       className="flex-1 min-h-0 min-w-0 canvas-container cursor-crosshair overflow-hidden relative"
       onPointerLeave={handleMouseLeave}
+      onContextMenu={handleContextMenu}
     >
       <canvas
         ref={canvasRef}
@@ -307,6 +353,13 @@ export function EditorCanvas() {
       {state.hoverPoint && (
         <div className="absolute bottom-4 left-4 editor-panel px-3 py-2 text-xs text-muted-foreground z-10">
           {Math.floor(state.hoverPoint.x)}, {Math.floor(state.hoverPoint.y)}
+        </div>
+      )}
+      
+      {/* Tolerance indicator when magic wand active */}
+      {isMagicWandActive && (
+        <div className="absolute top-4 left-4 editor-panel px-3 py-2 text-xs text-muted-foreground z-10">
+          Tolerance: {state.segmentSettings.tolerance.toFixed(1)}
         </div>
       )}
     </div>
