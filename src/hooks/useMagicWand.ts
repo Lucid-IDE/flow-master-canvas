@@ -4,7 +4,7 @@ import { coordinateSystem } from '@/lib/canvas/coordinateSystem';
 import { compositeLayers } from '@/lib/canvas/compositeLayers';
 import { floodFillWithEngine, WaveFloodFill, instantFloodFill, scanlineFloodFill, hybridFloodFill } from '@/lib/canvas/floodFill';
 import { createLayerFromSelection } from '@/lib/canvas/layerUtils';
-import { SelectionMask, Point, Rectangle, TransparencyMaskModifier } from '@/lib/canvas/types';
+import { SelectionMask, Point, Rectangle, TransparencyMaskModifier, Layer } from '@/lib/canvas/types';
 import { SegmentSettings } from '@/lib/canvas/segmentTypes';
 import { performanceTracker } from '@/components/editor/PerformanceOverlay';
 import { v4 as uuidv4 } from 'uuid';
@@ -32,6 +32,7 @@ interface PreviewState {
 export function useMagicWand() {
   const { 
     state, 
+    dispatch,
     setPreviewMask, 
     setSelection, 
     setHoverPoint,
@@ -39,8 +40,30 @@ export function useMagicWand() {
     addLayer,
     updateLayer,
     addModifier,
+    updateModifier,
     pushHistory
   } = useEditor();
+  
+  // Add layer with color metadata for segment visualization
+  const addLayerWithColor = useCallback((imageData: ImageData, name: string, bounds: Rectangle, segmentColor: string) => {
+    const layer: Layer = {
+      id: uuidv4(),
+      name,
+      type: 'raster',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      blendMode: 'normal',
+      imageData,
+      bounds,
+      transform: { tx: 0, ty: 0, rotation: 0, sx: 1, sy: 1 },
+      modifiers: [],
+      createdAt: Date.now(),
+      modifiedAt: Date.now(),
+      segmentColor, // Color for segment highlight visualization
+    };
+    dispatch({ type: 'ADD_LAYER', payload: layer });
+  }, [dispatch]);
   
   // Get segment settings from context
   const segmentSettings = state.segmentSettings;
@@ -232,10 +255,16 @@ export function useMagicWand() {
     
     if (result.pixels.length === 0) return null;
     
+    // Use the bounds from the flood fill result which contains the actual segment bounds
     const selection: SelectionMask = {
       id: uuidv4(),
       mask: result.mask,
-      bounds: result.bounds,
+      bounds: {
+        x: result.bounds.x,
+        y: result.bounds.y,
+        width: result.bounds.width,
+        height: result.bounds.height,
+      },
       width: CANVAS_WIDTH,
       height: CANVAS_HEIGHT,
       pixels: new Set(result.pixels),
@@ -252,6 +281,15 @@ export function useMagicWand() {
     return selection;
   }, [getComposite, segmentSettings]);
   
+  // Generate a random hue avoiding existing layer colors
+  const generateContrastingColor = useCallback((existingLayers: Layer[]): string => {
+    const goldenAngle = 137.508; // Golden angle in degrees for good color distribution
+    const baseHue = (existingLayers.length * goldenAngle) % 360;
+    // Add some variation to avoid being too predictable
+    const hue = (baseHue + Math.random() * 30 - 15 + 360) % 360;
+    return `hsl(${hue}, 70%, 55%)`;
+  }, []);
+  
   // Handle click - create selection or layer based on modifiers
   const handleClick = useCallback((worldX: number, worldY: number, shiftKey: boolean, altKey: boolean) => {
     cancelPreview();
@@ -262,7 +300,65 @@ export function useMagicWand() {
     const composite = getComposite();
     if (!composite) return;
     
-    if (altKey) {
+    if (altKey && shiftKey) {
+      // Alt+Shift+click: Merge transparency modifier into existing modifier layer or create new
+      const selectedLayerId = state.project.selectedLayerIds[0];
+      if (!selectedLayerId) {
+        console.warn('No layer selected for modifier');
+        return;
+      }
+      
+      const selectedLayer = state.project.layers.find(l => l.id === selectedLayerId);
+      if (!selectedLayer) return;
+      
+      // Find existing transparency mask modifier to merge into
+      const existingModifier = selectedLayer.modifiers.find(m => m.type === 'transparency-mask') as TransparencyMaskModifier | undefined;
+      
+      if (existingModifier) {
+        // Merge masks - OR them together
+        const mergedMask = new Uint8ClampedArray(selection.mask.length);
+        for (let i = 0; i < mergedMask.length; i++) {
+          mergedMask[i] = Math.max(existingModifier.parameters.mask[i] || 0, selection.mask[i]);
+        }
+        
+        // Calculate merged bounds
+        const mergedBounds = {
+          x: Math.min(existingModifier.parameters.bounds.x, selection.bounds.x),
+          y: Math.min(existingModifier.parameters.bounds.y, selection.bounds.y),
+          width: Math.max(
+            existingModifier.parameters.bounds.x + existingModifier.parameters.bounds.width,
+            selection.bounds.x + selection.bounds.width
+          ) - Math.min(existingModifier.parameters.bounds.x, selection.bounds.x),
+          height: Math.max(
+            existingModifier.parameters.bounds.y + existingModifier.parameters.bounds.height,
+            selection.bounds.y + selection.bounds.height
+          ) - Math.min(existingModifier.parameters.bounds.y, selection.bounds.y),
+        };
+        
+        updateModifier(selectedLayerId, existingModifier.id, {
+          parameters: {
+            mask: mergedMask,
+            bounds: mergedBounds,
+          },
+        });
+        pushHistory('Merge transparency mask modifier');
+      } else {
+        // No existing modifier, create new one
+        const modifier: TransparencyMaskModifier = {
+          id: uuidv4(),
+          type: 'transparency-mask',
+          enabled: true,
+          opacity: 1.0,
+          parameters: {
+            mask: selection.mask,
+            bounds: selection.bounds,
+          },
+        };
+        
+        addModifier(selectedLayerId, modifier);
+        pushHistory('Add transparency mask modifier');
+      }
+    } else if (altKey) {
       // Alt+click: Create transparency mask modifier on selected layer
       const selectedLayerId = state.project.selectedLayerIds[0];
       if (!selectedLayerId) {
@@ -274,7 +370,7 @@ export function useMagicWand() {
         id: uuidv4(),
         type: 'transparency-mask',
         enabled: true,
-        opacity: 1.0, // Full transparency effect
+        opacity: 1.0,
         parameters: {
           mask: selection.mask,
           bounds: selection.bounds,
@@ -284,19 +380,25 @@ export function useMagicWand() {
       addModifier(selectedLayerId, modifier);
       pushHistory('Add transparency mask modifier');
     } else if (shiftKey) {
-      // Shift+click: Add segment to selected layer (merge)
+      // Shift+click: Add segment to selected layer (merge) or create new segment layer
       const selectedLayerId = state.project.selectedLayerIds[0];
-      const selectedLayer = state.project.layers.find(l => l.id === selectedLayerId);
       
-      if (!selectedLayer) {
-        // No layer selected, create new one
+      // Find existing segment layer (layers that start with "Segment")
+      const segmentLayers = state.project.layers.filter(l => l.name.startsWith('Segment'));
+      const selectedLayer = state.project.layers.find(l => l.id === selectedLayerId);
+      const isSegmentLayer = selectedLayer?.name.startsWith('Segment');
+      
+      if (!selectedLayer || !isSegmentLayer) {
+        // Create a new segment layer if no segment layer is selected
         try {
           const newLayer = createLayerFromSelection(
             composite,
             selection,
             `Segment ${state.project.layers.length + 1}`
           );
-          addLayer(newLayer.imageData, newLayer.name);
+          // Generate contrasting color for this segment
+          const segmentColor = generateContrastingColor(state.project.layers);
+          addLayerWithColor(newLayer.imageData, newLayer.name, newLayer.bounds, segmentColor);
           pushHistory('Create segment layer');
         } catch (e) {
           console.error('Failed to create layer:', e);
@@ -304,7 +406,7 @@ export function useMagicWand() {
         return;
       }
       
-      // Merge segment into existing layer
+      // Merge segment into existing segment layer
       try {
         const segmentLayer = createLayerFromSelection(
           composite,
@@ -364,7 +466,7 @@ export function useMagicWand() {
         console.error('Failed to merge segment:', e);
       }
     } else {
-      // Normal click: Create new layer with segment
+      // Normal click: Create new layer with segment and contrasting color
       try {
         const newLayer = createLayerFromSelection(
           composite,
@@ -372,13 +474,15 @@ export function useMagicWand() {
           `Segment ${state.project.layers.length + 1}`
         );
         
-        addLayer(newLayer.imageData, newLayer.name);
+        // Generate contrasting color for this segment
+        const segmentColor = generateContrastingColor(state.project.layers);
+        addLayerWithColor(newLayer.imageData, newLayer.name, newLayer.bounds, segmentColor);
         pushHistory('Create segment layer');
       } catch (e) {
         console.error('Failed to create layer:', e);
       }
     }
-  }, [createSelection, cancelPreview, getComposite, state.project, addLayer, updateLayer, addModifier, pushHistory]);
+  }, [createSelection, cancelPreview, getComposite, state.project, addLayerWithColor, updateLayer, addModifier, updateModifier, pushHistory, generateContrastingColor]);
   
   // Handle mouse move - update preview
   const handleMouseMove = useCallback((worldX: number, worldY: number) => {
@@ -397,13 +501,14 @@ export function useMagicWand() {
     compositeRef.current = null;
   }, [cancelPreview, setHoverPoint]);
   
-  // Handle scroll for tolerance adjustment
+  // Handle scroll for tolerance adjustment - 1 unit per scroll tick
   const handleWheel = useCallback((deltaY: number) => {
     const currentTolerance = segmentSettings.tolerance;
-    const speed = 0.5;
+    // Use sign of deltaY for 1-unit adjustment per scroll tick
+    const delta = deltaY > 0 ? -1 : 1;
     const newTolerance = Math.max(
       MIN_TOLERANCE, 
-      Math.min(MAX_TOLERANCE, currentTolerance - deltaY * speed)
+      Math.min(MAX_TOLERANCE, currentTolerance + delta)
     );
     
     if (newTolerance !== currentTolerance) {

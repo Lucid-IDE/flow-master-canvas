@@ -65,6 +65,7 @@ export interface Layer {
   modifiers: Modifier[];
   createdAt: number;
   modifiedAt: number;
+  segmentColor?: string; // Color for segment highlight visualization
 }
 
 export interface SelectionMask {
