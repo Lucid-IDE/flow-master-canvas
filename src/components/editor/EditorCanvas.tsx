@@ -1,10 +1,12 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import { useEditor } from '@/contexts/EditorContext';
 import { useCanvasNavigation } from '@/hooks/useCanvasNavigation';
 import { useMagicWand } from '@/hooks/useMagicWand';
 import { coordinateSystem } from '@/lib/canvas/coordinateSystem';
 import { ModifierStack } from '@/lib/canvas/modifierStack';
-import { CANVAS_WIDTH, CANVAS_HEIGHT, GRID_SIZE } from '@/lib/canvas/constants';
+import { CANVAS_WIDTH, CANVAS_HEIGHT } from '@/lib/canvas/constants';
+import { segmentHighlightCache } from '@/lib/canvas/segmentHighlightCache';
+import { getCheckerboardCanvas, getCachedLayerCanvas, cleanupLayerCache } from '@/lib/canvas/renderCache';
 
 export function EditorCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -56,6 +58,13 @@ export function EditorCanvas() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
   
+  // Cleanup caches when layers change
+  useEffect(() => {
+    const activeIds = new Set(state.project.layers.map(l => l.id));
+    segmentHighlightCache.cleanup(activeIds);
+    cleanupLayerCache(activeIds);
+  }, [state.project.layers.length]);
+  
   // Render loop
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -67,8 +76,6 @@ export function EditorCanvas() {
     let animationId: number;
     
     const render = () => {
-      const dpr = window.devicePixelRatio || 1;
-      
       // Clear canvas
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -76,8 +83,9 @@ export function EditorCanvas() {
       // Apply transform
       coordinateSystem.applyTransform(ctx);
       
-      // Draw checkerboard background
-      drawCheckerboard(ctx, CANVAS_WIDTH, CANVAS_HEIGHT);
+      // Draw cached checkerboard background (FAST!)
+      const checkerboard = getCheckerboardCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+      ctx.drawImage(checkerboard, 0, 0);
       
       // Draw canvas border
       ctx.strokeStyle = 'hsl(217, 91%, 60%)';
@@ -94,75 +102,34 @@ export function EditorCanvas() {
         // Apply modifier stack to get final imageData
         const finalImageData = ModifierStack.applyStack(layer);
         
-        // Create temp canvas for layer
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = finalImageData.width;
-        tempCanvas.height = finalImageData.height;
-        const tempCtx = tempCanvas.getContext('2d');
-        
-        if (tempCtx) {
-          tempCtx.putImageData(finalImageData, 0, 0);
-          ctx.drawImage(tempCanvas, layer.bounds.x, layer.bounds.y);
-        }
+        // Use cached layer canvas (FAST!)
+        const layerCanvas = getCachedLayerCanvas(layer, finalImageData);
+        ctx.drawImage(layerCanvas, layer.bounds.x, layer.bounds.y);
         
         ctx.restore();
         
-        // Draw segment highlight for segment layers
+        // Draw segment highlight using cached canvases (FAST!)
         const isSelected = state.project.selectedLayerIds.includes(layer.id);
         if (layer.name.startsWith('Segment') && layer.segmentColor) {
-          ctx.save();
+          const highlight = segmentHighlightCache.getHighlight(layer);
           
-          // Draw filled highlight with low opacity
-          ctx.globalAlpha = isSelected ? 0.35 : 0.2;
-          ctx.fillStyle = layer.segmentColor;
-          
-          // Iterate over layer pixels and fill non-transparent ones
-          const data = layer.imageData.data;
-          for (let py = 0; py < layer.imageData.height; py++) {
-            for (let px = 0; px < layer.imageData.width; px++) {
-              const idx = (py * layer.imageData.width + px) * 4;
-              if (data[idx + 3] > 0) {
-                ctx.fillRect(layer.bounds.x + px, layer.bounds.y + py, 1, 1);
-              }
-            }
-          }
-          
-          // Draw border/glow outline for selected segments
-          if (isSelected) {
-            ctx.globalAlpha = 0.8;
-            ctx.strokeStyle = layer.segmentColor;
-            ctx.lineWidth = 2 / state.canvasState.zoom;
-            ctx.shadowColor = layer.segmentColor;
-            ctx.shadowBlur = 8 / state.canvasState.zoom;
+          if (highlight) {
+            ctx.save();
             
-            // Draw outline around non-transparent edge pixels
-            ctx.beginPath();
-            for (let py = 0; py < layer.imageData.height; py++) {
-              for (let px = 0; px < layer.imageData.width; px++) {
-                const idx = (py * layer.imageData.width + px) * 4;
-                if (data[idx + 3] > 0) {
-                  // Check if edge pixel
-                  const leftIdx = px > 0 ? (py * layer.imageData.width + px - 1) * 4 : -1;
-                  const rightIdx = px < layer.imageData.width - 1 ? (py * layer.imageData.width + px + 1) * 4 : -1;
-                  const topIdx = py > 0 ? ((py - 1) * layer.imageData.width + px) * 4 : -1;
-                  const bottomIdx = py < layer.imageData.height - 1 ? ((py + 1) * layer.imageData.width + px) * 4 : -1;
-                  
-                  const isEdge = 
-                    (leftIdx < 0 || data[leftIdx + 3] === 0) ||
-                    (rightIdx < 0 || data[rightIdx + 3] === 0) ||
-                    (topIdx < 0 || data[topIdx + 3] === 0) ||
-                    (bottomIdx < 0 || data[bottomIdx + 3] === 0);
-                  
-                  if (isEdge) {
-                    ctx.rect(layer.bounds.x + px, layer.bounds.y + py, 1, 1);
-                  }
-                }
-              }
+            // Draw fill highlight
+            ctx.globalAlpha = isSelected ? 0.35 : 0.2;
+            ctx.drawImage(highlight.fillCanvas, layer.bounds.x, layer.bounds.y);
+            
+            // Draw edge glow for selected segments
+            if (isSelected) {
+              ctx.globalAlpha = 0.8;
+              ctx.shadowColor = layer.segmentColor;
+              ctx.shadowBlur = 8 / state.canvasState.zoom;
+              ctx.drawImage(highlight.edgeCanvas, layer.bounds.x, layer.bounds.y);
             }
-            ctx.stroke();
+            
+            ctx.restore();
           }
-          
-          ctx.restore();
         }
       }
       
@@ -186,21 +153,6 @@ export function EditorCanvas() {
     };
   }, [state]);
   
-  // Draw checkerboard pattern
-  const drawCheckerboard = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    const size = GRID_SIZE;
-    ctx.fillStyle = '#1a1a24';
-    ctx.fillRect(0, 0, width, height);
-    
-    ctx.fillStyle = '#232333';
-    for (let y = 0; y < height; y += size) {
-      for (let x = 0; x < width; x += size) {
-        if ((Math.floor(x / size) + Math.floor(y / size)) % 2 === 0) {
-          ctx.fillRect(x, y, size, size);
-        }
-      }
-    }
-  };
   
   // Draw preview mask with glow effect
   const drawPreviewMask = (
