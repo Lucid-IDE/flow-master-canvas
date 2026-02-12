@@ -2,8 +2,6 @@ import React from 'react';
 import { useEditor } from '@/contexts/EditorContext';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { CANVAS_WIDTH, CANVAS_HEIGHT } from '@/lib/canvas/constants';
-
 function InfoRow({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div className="flex items-center justify-between py-1">
@@ -41,7 +39,7 @@ export function DebugDrawer() {
       
       <div className="p-4 space-y-6">
         <Section title="Canvas">
-          <InfoRow label="Dimensions" value={`${CANVAS_WIDTH} × ${CANVAS_HEIGHT}`} mono />
+          <InfoRow label="Dimensions" value={`${state.project.width} x ${state.project.height}`} mono />
           <InfoRow label="Zoom" value={`${(state.canvasState.zoom * 100).toFixed(0)}%`} mono />
           <InfoRow label="Pan" value={`${state.canvasState.panX.toFixed(0)}, ${state.canvasState.panY.toFixed(0)}`} mono />
         </Section>

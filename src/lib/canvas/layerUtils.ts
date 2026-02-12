@@ -1,7 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Layer, Transform, Rectangle, SelectionMask } from './types';
 import { extractPixelsWithMask, calculateBounds } from './imageUtils';
-import { CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
 
 /**
  * Create identity transform
@@ -25,8 +24,8 @@ export function createLayer(
   bounds?: Rectangle
 ): Layer {
   const actualBounds = bounds || {
-    x: Math.floor((CANVAS_WIDTH - imageData.width) / 2),
-    y: Math.floor((CANVAS_HEIGHT - imageData.height) / 2),
+    x: 0,
+    y: 0,
     width: imageData.width,
     height: imageData.height,
   };

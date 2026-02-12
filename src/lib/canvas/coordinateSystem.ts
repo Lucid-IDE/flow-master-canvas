@@ -3,7 +3,10 @@ import { CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
 
 /**
  * CoordinateSystem - Handles all coordinate transformations
- * 
+ *
+ * Now supports dynamic project dimensions via setProjectSize().
+ * Falls back to CANVAS_WIDTH/CANVAS_HEIGHT for backwards compatibility.
+ *
  * Coordinate Spaces:
  * - Screen: CSS pixels from browser event
  * - Canvas: Physical pixels on canvas element
@@ -15,10 +18,17 @@ export class CoordinateSystem {
   private panY: number = 0;
   private zoom: number = 1;
   private dpr: number = 1;
+  private projectW: number = CANVAS_WIDTH;
+  private projectH: number = CANVAS_HEIGHT;
 
   setCanvas(canvas: HTMLCanvasElement): void {
     this.canvas = canvas;
     this.dpr = window.devicePixelRatio || 1;
+  }
+
+  setProjectSize(w: number, h: number): void {
+    this.projectW = w;
+    this.projectH = h;
   }
 
   updateTransform(panX: number, panY: number, zoom: number): void {
@@ -27,115 +37,64 @@ export class CoordinateSystem {
     this.zoom = zoom;
   }
 
-  /**
-   * Convert screen coordinates to canvas coordinates
-   */
   screenToCanvas(screenX: number, screenY: number): Point {
-    if (!this.canvas) {
-      return { x: screenX, y: screenY };
-    }
-
+    if (!this.canvas) return { x: screenX, y: screenY };
     const rect = this.canvas.getBoundingClientRect();
     const scaleX = this.canvas.width / rect.width;
     const scaleY = this.canvas.height / rect.height;
-
     return {
       x: (screenX - rect.left) * scaleX,
       y: (screenY - rect.top) * scaleY,
     };
   }
 
-  /**
-   * Convert canvas coordinates to world coordinates
-   */
   canvasToWorld(canvasX: number, canvasY: number): Point {
-    if (!this.canvas) {
-      return { x: canvasX, y: canvasY };
-    }
-
+    if (!this.canvas) return { x: canvasX, y: canvasY };
     const centerX = this.canvas.width / (2 * this.dpr);
     const centerY = this.canvas.height / (2 * this.dpr);
-
     return {
-      x: (canvasX / this.dpr - centerX - this.panX) / this.zoom + CANVAS_WIDTH / 2,
-      y: (canvasY / this.dpr - centerY - this.panY) / this.zoom + CANVAS_HEIGHT / 2,
+      x: (canvasX / this.dpr - centerX - this.panX) / this.zoom + this.projectW / 2,
+      y: (canvasY / this.dpr - centerY - this.panY) / this.zoom + this.projectH / 2,
     };
   }
 
-  /**
-   * Convert screen coordinates directly to world coordinates
-   */
   screenToWorld(screenX: number, screenY: number): Point {
     const canvasPoint = this.screenToCanvas(screenX, screenY);
     return this.canvasToWorld(canvasPoint.x, canvasPoint.y);
   }
 
-  /**
-   * Convert world coordinates to canvas coordinates
-   */
   worldToCanvas(worldX: number, worldY: number): Point {
-    if (!this.canvas) {
-      return { x: worldX, y: worldY };
-    }
-
+    if (!this.canvas) return { x: worldX, y: worldY };
     const centerX = this.canvas.width / (2 * this.dpr);
     const centerY = this.canvas.height / (2 * this.dpr);
-
     return {
-      x: ((worldX - CANVAS_WIDTH / 2) * this.zoom + this.panX + centerX) * this.dpr,
-      y: ((worldY - CANVAS_HEIGHT / 2) * this.zoom + this.panY + centerY) * this.dpr,
+      x: ((worldX - this.projectW / 2) * this.zoom + this.panX + centerX) * this.dpr,
+      y: ((worldY - this.projectH / 2) * this.zoom + this.panY + centerY) * this.dpr,
     };
   }
 
-  /**
-   * Convert world coordinates to pixel index
-   */
-  worldToPixelIndex(worldX: number, worldY: number, width: number = CANVAS_WIDTH): number {
-    const x = Math.floor(worldX);
-    const y = Math.floor(worldY);
-    return y * width + x;
+  worldToPixelIndex(worldX: number, worldY: number, width: number = this.projectW): number {
+    return Math.floor(worldY) * width + Math.floor(worldX);
   }
 
-  /**
-   * Convert pixel index to world coordinates
-   */
-  pixelIndexToWorld(index: number, width: number = CANVAS_WIDTH): Point {
-    return {
-      x: index % width,
-      y: Math.floor(index / width),
-    };
+  pixelIndexToWorld(index: number, width: number = this.projectW): Point {
+    return { x: index % width, y: Math.floor(index / width) };
   }
 
-  /**
-   * Check if world point is within canvas bounds
-   */
   isInBounds(worldX: number, worldY: number): boolean {
-    return (
-      worldX >= 0 &&
-      worldX < CANVAS_WIDTH &&
-      worldY >= 0 &&
-      worldY < CANVAS_HEIGHT
-    );
+    return worldX >= 0 && worldX < this.projectW && worldY >= 0 && worldY < this.projectH;
   }
 
-  /**
-   * Apply transform to canvas context for rendering
-   */
   applyTransform(ctx: CanvasRenderingContext2D): void {
     if (!this.canvas) return;
-
     const centerX = this.canvas.width / (2 * this.dpr);
     const centerY = this.canvas.height / (2 * this.dpr);
-
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.translate(centerX + this.panX, centerY + this.panY);
     ctx.scale(this.zoom, this.zoom);
-    ctx.translate(-CANVAS_WIDTH / 2, -CANVAS_HEIGHT / 2);
+    ctx.translate(-this.projectW / 2, -this.projectH / 2);
   }
 
-  /**
-   * Reset transform on canvas context
-   */
   resetTransform(ctx: CanvasRenderingContext2D): void {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
